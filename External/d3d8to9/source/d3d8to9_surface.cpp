@@ -185,7 +185,7 @@ static bool ShadowNoResync()
 	{
 		char buf[8] = { 0 };
 		DWORD n = GetEnvironmentVariableA("DXW_SHADOW_NORESYNC", buf, sizeof(buf));
-		enabled = (n > 0 && buf[0] == '1');
+		enabled = !(n > 0 && buf[0] == '0');   // default ON (persistent canvas)
 		init = true;
 		if (enabled)
 			CpShadowEvent("NORESYNC mode enabled");
