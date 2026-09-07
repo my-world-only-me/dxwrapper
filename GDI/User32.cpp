@@ -175,7 +175,7 @@ BOOL WINAPI user_EnumDisplaySettingsA(LPCSTR devName, DWORD modeNum, DEVMODEA *d
 {
 	Logging::LogDebug() << __FUNCTION__ << " " << devName << " " << modeNum;
 
-	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsProc, EnumDisplaySettingsA, EnumDisplaySettingsA_out);
+	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsAProc, EnumDisplaySettingsProc, EnumDisplaySettingsA_out);
 
 	return user_EnumDisplaySettingsT(EnumDisplaySettingsProc, devName, modeNum, dm);
 }
@@ -184,7 +184,7 @@ BOOL WINAPI user_EnumDisplaySettingsW(LPCWSTR devName, DWORD modeNum, DEVMODEW *
 {
 	Logging::LogDebug() << __FUNCTION__ << " " << modeNum;
 
-	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsProcW, EnumDisplaySettingsW, EnumDisplaySettingsW_out);
+	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsWProc, EnumDisplaySettingsProcW, EnumDisplaySettingsW_out);
 
 	if (!EnumDisplaySettingsProcW)
 	{
