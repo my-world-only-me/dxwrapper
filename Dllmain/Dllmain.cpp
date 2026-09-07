@@ -706,6 +706,16 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID lpReserved)
 				// Bit-depth spoofing for 16bpp-era games (see user_EnumDisplaySettingsA/W)
 				EnumDisplaySettingsA_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "EnumDisplaySettingsA"), "EnumDisplaySettingsA", user_EnumDisplaySettingsA);
 				EnumDisplaySettingsW_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "EnumDisplaySettingsW"), "EnumDisplaySettingsW", user_EnumDisplaySettingsW);
+				// GetDeviceCaps must also be hooked here: the original install
+				// lives in InitDDraw() (ddraw wrapper) which never runs for
+				// D3D8-only games (Dd7to9=0), so the 16bpp bit-depth spoof
+				// would silently not work. (gdi_GetDeviceCaps)
+				if (!GetModuleHandleA("gdi32.dll")) LoadLibrary("gdi32.dll");
+				HMODULE gdi32 = GetModuleHandleA("gdi32.dll");
+				if (gdi32)
+				{
+					GetDeviceCaps_out = (FARPROC)Hook::HotPatch(GetProcAddress(gdi32, "GetDeviceCaps"), "GetDeviceCaps", gdi_GetDeviceCaps);
+				}
 			}
 		}
 

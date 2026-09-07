@@ -163,10 +163,11 @@ BOOL WINAPI user_EnumDisplaySettingsT(D EnumDisplaySettingsT, LPCSTR devName, DW
 		return FALSE;
 	}
 	BOOL ret = EnumDisplaySettingsT(devName, modeNum, dm);
-	if (ret && dm && Config.DdrawOverrideBitMode == 16)
+	if (ret && dm && (Config.Spoof16Bpp || Config.DdrawOverrideBitMode == 16))
 	{
 		dm->dmBitsPerPel = 16;
 		dm->dmFields |= DM_BITSPERPEL;
+		Logging::Log() << "EnumDisplaySettings spoofed bpp=16 mode=" << modeNum;
 	}
 	return ret;
 }
@@ -191,10 +192,11 @@ BOOL WINAPI user_EnumDisplaySettingsW(LPCWSTR devName, DWORD modeNum, DEVMODEW *
 		return FALSE;
 	}
 	BOOL ret = EnumDisplaySettingsProcW(devName, modeNum, dm);
-	if (ret && dm && Config.DdrawOverrideBitMode == 16)
+	if (ret && dm && (Config.Spoof16Bpp || Config.DdrawOverrideBitMode == 16))
 	{
 		dm->dmBitsPerPel = 16;
 		dm->dmFields |= DM_BITSPERPEL;
+		Logging::Log() << "EnumDisplaySettingsW spoofed bpp=16 mode=" << modeNum;
 	}
 	return ret;
 }

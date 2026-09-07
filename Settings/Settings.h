@@ -75,6 +75,7 @@ inline std::ostream& operator<<(std::ostream& os, const DHEX& dhex) {
 	visit(DdrawOverrideHeight) \
 	visit(DdrawOverrideStencilFormat) \
 	visit(DdrawResolutionHack) \
+	visit(Spoof16Bpp) \
 	visit(DdrawUseDirect3D9Caps) \
 	visit(DdrawUseShadowSurface) \
 	visit(DdrawUseNativeResolution) \
@@ -304,6 +305,7 @@ struct CONFIG
 	bool DdrawLimitTextureFormats = false;		// Limits the number of texture formats sent to the program, some games crash when you feed them with too many textures
 	bool DdrawLimitDisplayModeCount = false;	// Limits the number of display modes sent to program, some games crash when you feed them with too many resolutions
 	DWORD DdrawOverrideBitMode = 0;				// Forces DirectX to use specified bit mode: 8, 16, 24, 32
+	bool Spoof16Bpp = false;					// Spoof the desktop color depth as 16bpp (GetDeviceCaps/EnumDisplaySettings) for 16bpp-era games in windowed mode
 	DWORD DdrawOverrideWidth = 0;				// Force Direct3d9 to use this width when using Dd7to9
 	DWORD DdrawOverrideHeight = 0;				// Force Direct3d9 to use this height when using Dd7to9
 	DWORD OverrideRefreshRate = 0;				// Force Direct3d9 to use this refresh rate, only works in exclusive fullscreen mode
