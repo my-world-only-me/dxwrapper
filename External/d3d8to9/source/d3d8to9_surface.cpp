@@ -1,0 +1,340 @@
+/**
+ * Copyright (C) 2015 Patrick Mours. All rights reserved.
+ * License: https://github.com/crosire/d3d8to9#license
+ */
+
+#include "d3d8to9.hpp"
+
+Direct3DSurface8::Direct3DSurface8(Direct3DDevice8 *Device, IDirect3DSurface9 *ProxyInterface) :
+	Device(Device), ProxyInterface(ProxyInterface)
+{
+	Device->ProxyAddressLookupTable->SaveAddress(this, ProxyInterface);
+}
+Direct3DSurface8::~Direct3DSurface8()
+{
+}
+
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::QueryInterface(REFIID riid, void **ppvObj)
+{
+	if (ppvObj == nullptr)
+		return E_POINTER;
+
+	if (riid == __uuidof(IDirect3DSurface8) ||
+		riid == __uuidof(IUnknown))
+	{
+		AddRef();
+		*ppvObj = static_cast<IDirect3DSurface8 *>(this);
+
+		return S_OK;
+	}
+
+	const HRESULT hr = ProxyInterface->QueryInterface(ConvertREFIID(riid), ppvObj);
+	if (SUCCEEDED(hr))
+		GenericQueryInterface(riid, ppvObj, Device);
+
+	return hr;
+}
+ULONG STDMETHODCALLTYPE Direct3DSurface8::AddRef()
+{
+	return ProxyInterface->AddRef();
+}
+ULONG STDMETHODCALLTYPE Direct3DSurface8::Release()
+{
+	return ProxyInterface->Release();
+}
+
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::GetDevice(IDirect3DDevice8 **ppDevice)
+{
+	if (ppDevice == nullptr)
+		return D3DERR_INVALIDCALL;
+
+	Device->AddRef();
+
+	*ppDevice = Device;
+
+	return D3D_OK;
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::SetPrivateData(REFGUID refguid, const void *pData, DWORD SizeOfData, DWORD Flags)
+{
+	return ProxyInterface->SetPrivateData(refguid, pData, SizeOfData, Flags);
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::GetPrivateData(REFGUID refguid, void *pData, DWORD *pSizeOfData)
+{
+	return ProxyInterface->GetPrivateData(refguid, pData, pSizeOfData);
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::FreePrivateData(REFGUID refguid)
+{
+	return ProxyInterface->FreePrivateData(refguid);
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::GetContainer(REFIID riid, void **ppContainer)
+{
+	const HRESULT hr = ProxyInterface->GetContainer(ConvertREFIID(riid), ppContainer);
+	if (SUCCEEDED(hr))
+		GenericQueryInterface(riid, ppContainer, Device);
+
+	return hr;
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::GetDesc(D3DSURFACE_DESC8 *pDesc)
+{
+	if (pDesc == nullptr)
+		return D3DERR_INVALIDCALL;
+
+	D3DSURFACE_DESC SurfaceDesc;
+
+	const HRESULT hr = ProxyInterface->GetDesc(&SurfaceDesc);
+	if (FAILED(hr))
+		return hr;
+
+	ConvertSurfaceDesc(SurfaceDesc, *pDesc);
+
+	return D3D_OK;
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::LockRect(D3DLOCKED_RECT *pLockedRect, const RECT *pRect, DWORD Flags)
+{
+	if (!IsShadowEnabled())
+		return ProxyInterface->LockRect(pLockedRect, pRect, Flags);
+
+	return LockShadowRect(pLockedRect, pRect, Flags);
+}
+HRESULT STDMETHODCALLTYPE Direct3DSurface8::UnlockRect()
+{
+	if (!IsShadowEnabled())
+		return ProxyInterface->UnlockRect();
+
+	UnlockShadowRect();
+	return D3D_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Render target shadow lock cache
+//
+// Software 2D painters (the Gfx3D engine paints background, fog and UI by
+// locking the render target on the CPU) pay one full GPU roundtrip per lock
+// on D3D9-era drivers. The shadow keeps those edits in system memory and
+// writes them back in one batched dirty rectangle right before the next GPU
+// operation touches the target (clear, draw, copy, present).
+// ---------------------------------------------------------------------------
+
+volatile LONG GpuOpSerial = 1;
+
+static UINT GetShadowFormatBpp(D3DFORMAT Format)
+{
+	switch (Format)
+	{
+	case D3DFMT_R5G6B5:
+	case D3DFMT_X1R5G5B5:
+	case D3DFMT_A1R5G5B5:
+	case D3DFMT_A4R4G4B4:
+		return 2;
+	case D3DFMT_A8R8G8B8:
+	case D3DFMT_X8R8G8B8:
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+void Direct3DSurface8::EnableRenderTargetShadow()
+{
+	D3DSURFACE_DESC Desc;
+
+	if (FAILED(ProxyInterface->GetDesc(&Desc)))
+		return;
+
+	if ((Desc.Usage & D3DUSAGE_RENDERTARGET) == 0 || Desc.MultiSampleType != D3DMULTISAMPLE_NONE)
+		return;
+
+	const UINT Bpp = GetShadowFormatBpp(Desc.Format);
+
+	if (Bpp == 0)
+		return;
+
+	if (ShadowBuffer && ShadowWidth == Desc.Width && ShadowHeight == Desc.Height && ShadowFormat == Desc.Format)
+		return;
+
+	delete[] ShadowBuffer;
+	ShadowWidth = Desc.Width;
+	ShadowHeight = Desc.Height;
+	ShadowFormat = Desc.Format;
+	ShadowBpp = Bpp;
+	ShadowBuffer = new BYTE[(size_t)ShadowWidth * ShadowHeight * ShadowBpp];
+	HasShadowDirty = false;
+	HasOpenLock = false;
+	LastSyncSerial = 0;
+
+	// Start from the current GPU content so even the first lock returns
+	// valid pixels (the app only overwrites part of the surface per frame).
+	ShadowSyncFromReal();
+}
+
+void Direct3DSurface8::InvalidateRenderTargetShadow()
+{
+	// Device was reset: force a full resync on the next lock.
+	HasShadowDirty = false;
+	HasOpenLock = false;
+	LastSyncSerial = 0;
+}
+
+void Direct3DSurface8::ShadowSyncFromReal()
+{
+	D3DLOCKED_RECT lr;
+
+	if (FAILED(ProxyInterface->LockRect(&lr, nullptr, D3DLOCK_READONLY)))
+		return; // device lost: keep LastSyncSerial behind and retry later
+
+	const BYTE *src = (const BYTE *)lr.pBits;
+
+	for (UINT y = 0; y < ShadowHeight; ++y)
+	{
+		memcpy(ShadowBuffer + (size_t)y * ShadowWidth * ShadowBpp,
+			src + (size_t)y * lr.Pitch,
+			(size_t)ShadowWidth * ShadowBpp);
+	}
+
+	ProxyInterface->UnlockRect();
+	LastSyncSerial = GpuOpSerial;
+}
+
+void Direct3DSurface8::EnsureShadowSynced()
+{
+	if (LastSyncSerial != GpuOpSerial)
+		ShadowSyncFromReal();
+}
+
+HRESULT Direct3DSurface8::LockShadowRect(D3DLOCKED_RECT *pLockedRect, const RECT *pRect, DWORD Flags)
+{
+	if (pLockedRect == nullptr)
+		return D3DERR_INVALIDCALL;
+
+	EnsureShadowSynced();
+
+	RECT rc;
+
+	if (pRect != nullptr)
+	{
+		rc = *pRect;
+	}
+	else
+	{
+		rc.left = 0;
+		rc.top = 0;
+		rc.right = (LONG)ShadowWidth;
+		rc.bottom = (LONG)ShadowHeight;
+	}
+
+	if (rc.left < 0) rc.left = 0;
+	if (rc.top < 0) rc.top = 0;
+	if (rc.right > (LONG)ShadowWidth) rc.right = (LONG)ShadowWidth;
+	if (rc.bottom > (LONG)ShadowHeight) rc.bottom = (LONG)ShadowHeight;
+
+	pLockedRect->Pitch = (UINT)ShadowWidth * ShadowBpp;
+	pLockedRect->pBits = ShadowBuffer + ((size_t)rc.top * ShadowWidth + rc.left) * ShadowBpp;
+
+	OpenLockRect = rc;
+	OpenLockFlags = Flags;
+	HasOpenLock = true;
+
+	return D3D_OK;
+}
+
+void Direct3DSurface8::MarkShadowDirty(const RECT &rc)
+{
+	if (HasShadowDirty)
+	{
+		if (rc.left < ShadowDirty.left) ShadowDirty.left = rc.left;
+		if (rc.top < ShadowDirty.top) ShadowDirty.top = rc.top;
+		if (rc.right > ShadowDirty.right) ShadowDirty.right = rc.right;
+		if (rc.bottom > ShadowDirty.bottom) ShadowDirty.bottom = rc.bottom;
+	}
+	else
+	{
+		ShadowDirty = rc;
+	}
+
+	HasShadowDirty = true;
+}
+
+void Direct3DSurface8::UnlockShadowRect()
+{
+	if (!HasOpenLock)
+		return;
+
+	HasOpenLock = false;
+
+	if ((OpenLockFlags & D3DLOCK_READONLY) == 0)
+		MarkShadowDirty(OpenLockRect);
+}
+
+void Direct3DSurface8::FlushShadowDirty()
+{
+	if (!HasShadowDirty || !ShadowBuffer)
+		return;
+
+	RECT rc = ShadowDirty;
+
+	if (rc.left < 0) rc.left = 0;
+	if (rc.top < 0) rc.top = 0;
+	if (rc.right > (LONG)ShadowWidth) rc.right = (LONG)ShadowWidth;
+	if (rc.bottom > (LONG)ShadowHeight) rc.bottom = (LONG)ShadowHeight;
+
+	if (rc.left >= rc.right || rc.top >= rc.bottom)
+	{
+		HasShadowDirty = false;
+		return;
+	}
+
+	D3DLOCKED_RECT lr;
+
+	if (FAILED(ProxyInterface->LockRect(&lr, &rc, 0)))
+		return; // device lost: keep dirty for retry
+
+	for (LONG y = rc.top; y < rc.bottom; ++y)
+	{
+		memcpy((BYTE *)lr.pBits + (size_t)(y - rc.top) * lr.Pitch + (size_t)rc.left * ShadowBpp,
+			ShadowBuffer + ((size_t)y * ShadowWidth + rc.left) * ShadowBpp,
+			(size_t)(rc.right - rc.left) * ShadowBpp);
+	}
+
+	ProxyInterface->UnlockRect();
+	HasShadowDirty = false;
+	LastSyncSerial = GpuOpSerial;
+}
+
+void Direct3DSurface8::CopyShadowToSurface(const RECT &SrcRect, IDirect3DSurface9 *pDestSurface, LONG DestX, LONG DestY)
+{
+	EnsureShadowSynced();
+
+	D3DLOCKED_RECT lr;
+
+	if (FAILED(pDestSurface->LockRect(&lr, nullptr, 0)))
+		return;
+
+	for (LONG y = SrcRect.top; y < SrcRect.bottom; ++y)
+	{
+		memcpy((BYTE *)lr.pBits + (size_t)(DestY + (y - SrcRect.top)) * lr.Pitch + (size_t)DestX * ShadowBpp,
+			ShadowBuffer + ((size_t)y * ShadowWidth + SrcRect.left) * ShadowBpp,
+			(size_t)(SrcRect.right - SrcRect.left) * ShadowBpp);
+	}
+
+	pDestSurface->UnlockRect();
+}
+
+void Direct3DSurface8::CopySurfaceToShadow(IDirect3DSurface9 *pSrcSurface, const RECT &SrcRect, LONG DestX, LONG DestY)
+{
+	D3DLOCKED_RECT lr;
+
+	if (FAILED(pSrcSurface->LockRect(&lr, &SrcRect, D3DLOCK_READONLY)))
+		return;
+
+	for (LONG y = 0; y < SrcRect.bottom - SrcRect.top; ++y)
+	{
+		memcpy(ShadowBuffer + ((size_t)(DestY + y) * ShadowWidth + DestX) * ShadowBpp,
+			(const BYTE *)lr.pBits + (size_t)y * lr.Pitch,
+			(size_t)(SrcRect.right - SrcRect.left) * ShadowBpp);
+	}
+
+	pSrcSurface->UnlockRect();
+
+	RECT Dirty = { DestX, DestY, DestX + (SrcRect.right - SrcRect.left), DestY + (SrcRect.bottom - SrcRect.top) };
+	MarkShadowDirty(Dirty);
+}
