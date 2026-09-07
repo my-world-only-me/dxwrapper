@@ -135,6 +135,15 @@ void CpShadowNewFrame()
 
 	if (!s_ShadowLog && s_ShadowLogBytes == 0)
 	{
+		// Diagnostics are off unless DXW_SHADOW_LOG=1 is set.
+		char env[8] = { 0 };
+		DWORD n = GetEnvironmentVariableA("DXW_SHADOW_LOG", env, sizeof(env));
+		if (!(n > 0 && env[0] == '1'))
+		{
+			s_ShadowLogBytes = SHADOW_LOG_CAP + 1; // disabled: never open the file
+			return;
+		}
+
 		char path[MAX_PATH];
 		GetModuleFileNameA(nullptr, path, MAX_PATH);
 		char *slash = strrchr(path, '\\');
