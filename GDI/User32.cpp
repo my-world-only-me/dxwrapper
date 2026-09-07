@@ -29,6 +29,8 @@ namespace GdiWrapper
 	INITIALIZE_OUT_WRAPPED_PROC(CreateWindowExA, unused);
 	INITIALIZE_OUT_WRAPPED_PROC(CreateWindowExW, unused);
 	INITIALIZE_OUT_WRAPPED_PROC(DestroyWindow, unused);
+	INITIALIZE_OUT_WRAPPED_PROC(EnumDisplaySettingsA, unused);
+	INITIALIZE_OUT_WRAPPED_PROC(EnumDisplaySettingsW, unused);
 	INITIALIZE_OUT_WRAPPED_PROC(GetSystemMetrics, unused);
 	INITIALIZE_OUT_WRAPPED_PROC(GetWindowLongA, unused);
 	INITIALIZE_OUT_WRAPPED_PROC(GetWindowLongW, unused);
@@ -146,6 +148,55 @@ int WINAPI user_GetSystemMetrics(int nIndex)
 	}
 
 	return GetSystemMetrics(nIndex);
+}
+
+// Bit-depth spoofing for EnumDisplaySettings: 16bpp-era games read the
+// desktop bpp via EnumDisplaySettings(ENUM_CURRENT_SETTINGS/REGISTRY) and
+// refuse windowed mode unless it reports 16. When the user sets
+// DdrawOverrideBitMode=16, report dmBitsPerPel=16 while the real desktop
+// stays 32bpp (rendering happens at 32bpp through D3D9 anyway).
+template <class D>
+BOOL WINAPI user_EnumDisplaySettingsT(D EnumDisplaySettingsT, LPCSTR devName, DWORD modeNum, DEVMODEA *dm)
+{
+	if (!EnumDisplaySettingsT)
+	{
+		return FALSE;
+	}
+	BOOL ret = EnumDisplaySettingsT(devName, modeNum, dm);
+	if (ret && dm && Config.DdrawOverrideBitMode == 16)
+	{
+		dm->dmBitsPerPel = 16;
+		dm->dmFields |= DM_BITSPERPEL;
+	}
+	return ret;
+}
+
+BOOL WINAPI user_EnumDisplaySettingsA(LPCSTR devName, DWORD modeNum, DEVMODEA *dm)
+{
+	Logging::LogDebug() << __FUNCTION__ << " " << devName << " " << modeNum;
+
+	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsProc, EnumDisplaySettingsA, EnumDisplaySettingsA_out);
+
+	return user_EnumDisplaySettingsT(EnumDisplaySettingsProc, devName, modeNum, dm);
+}
+
+BOOL WINAPI user_EnumDisplaySettingsW(LPCWSTR devName, DWORD modeNum, DEVMODEW *dm)
+{
+	Logging::LogDebug() << __FUNCTION__ << " " << modeNum;
+
+	DEFINE_STATIC_PROC_ADDRESS(EnumDisplaySettingsProcW, EnumDisplaySettingsW, EnumDisplaySettingsW_out);
+
+	if (!EnumDisplaySettingsProcW)
+	{
+		return FALSE;
+	}
+	BOOL ret = EnumDisplaySettingsProcW(devName, modeNum, dm);
+	if (ret && dm && Config.DdrawOverrideBitMode == 16)
+	{
+		dm->dmBitsPerPel = 16;
+		dm->dmFields |= DM_BITSPERPEL;
+	}
+	return ret;
 }
 
 LONG WINAPI GetWindowLongT(GetWindowLongProc GetWindowLongT, HWND hWnd, int nIndex)

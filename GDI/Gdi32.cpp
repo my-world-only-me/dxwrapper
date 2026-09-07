@@ -37,6 +37,15 @@ int WINAPI gdi_GetDeviceCaps(HDC hdc, int index)
 
 	if (index == BITSPIXEL)
 	{
+		// Bit-depth spoofing: 16bpp-era games (e.g. 凤舞天骄) hard-check the
+		// desktop bpp via GetDeviceCaps(BITSPIXEL) before allowing windowed
+		// mode. On modern 32bpp desktops that check fails, so when the user
+		// sets DdrawOverrideBitMode=16 we report 16 to satisfy it while the
+		// real rendering still happens at 32bpp through D3D9.
+		if (Config.DdrawOverrideBitMode == 16)
+		{
+			return 16;
+		}
 		switch (m_IDirectDrawX::GetDDrawBitsPixel(WindowFromDC(hdc)))
 		{
 		case 8:

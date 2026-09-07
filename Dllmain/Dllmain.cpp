@@ -703,6 +703,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID lpReserved)
 				CreateWindowExA_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "CreateWindowExA"), "CreateWindowExA", user_CreateWindowExA);
 				CreateWindowExW_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "CreateWindowExW"), "CreateWindowExW", user_CreateWindowExW);
 				DestroyWindow_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "DestroyWindow"), "DestroyWindow", user_DestroyWindow);
+				// Bit-depth spoofing for 16bpp-era games (see user_EnumDisplaySettingsA/W)
+				EnumDisplaySettingsA_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "EnumDisplaySettingsA"), "EnumDisplaySettingsA", user_EnumDisplaySettingsA);
+				EnumDisplaySettingsW_out = (FARPROC)Hook::HotPatch(GetProcAddress(user32, "EnumDisplaySettingsW"), "EnumDisplaySettingsW", user_EnumDisplaySettingsW);
 			}
 		}
 
