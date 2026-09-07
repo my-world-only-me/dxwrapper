@@ -227,6 +227,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::Reset(D3DPRESENT_PARAMETERS8 *pPresen
 	}
 
 	// All render target content is recreated after a reset.
+	CpShadowEvent("RESET");
 	if (RenderTargetShadow)
 		RenderTargetShadow->InvalidateRenderTargetShadow();
 	RenderTargetShadow = nullptr;
@@ -240,6 +241,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::Present(const RECT *pSourceRect, cons
 	UNREFERENCED_PARAMETER(pDirtyRegion);
 
 	FlushRenderTargetShadow();
+	CpShadowNewFrame();
 
 	return ProxyInterface->Present(pSourceRect, pDestRect, hDestWindowOverride, nullptr);
 }
@@ -484,6 +486,10 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::CopyRects(IDirect3DSurface8 *pSourceS
 	const bool SrcIsShadow = (pSourceSurfaceImpl == RenderTargetShadow) && pSourceSurfaceImpl->IsShadowEnabled();
 	const bool DstIsShadow = (pDestinationSurfaceImpl == RenderTargetShadow) && pDestinationSurfaceImpl->IsShadowEnabled();
 
+	CpShadowEvent("COPYRECTS src=%p(shadow=%d fmt=%d pool=%d) dst=%p(shadow=%d fmt=%d pool=%d) rects=%u",
+		(void*)pSourceSurfaceImpl, (int)SrcIsShadow, (int)SourceDesc.Format, (int)SourceDesc.Pool,
+		(void*)pDestinationSurfaceImpl, (int)DstIsShadow, (int)DestinationDesc.Format, (int)DestinationDesc.Pool, cRects);
+
 	if (SrcIsShadow || DstIsShadow)
 	{
 		if (SrcIsShadow)
@@ -654,6 +660,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::SetRenderTarget(IDirect3DSurface8 *pR
 	// shadow flush nor invalidate it; only draws into the tracked
 	// backbuffer do.
 	BackbufferBound = (pRenderTarget == nullptr) || (pRenderTarget == RenderTargetShadow);
+	CpShadowEvent("SET-RT rt=%p bound=%d", (void*)pRenderTarget, (int)BackbufferBound);
 
 	if (pNewZStencil != nullptr)
 	{

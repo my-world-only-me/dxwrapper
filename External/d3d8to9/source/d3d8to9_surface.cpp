@@ -117,6 +117,61 @@ HRESULT STDMETHODCALLTYPE Direct3DSurface8::UnlockRect()
 
 volatile LONG GpuOpSerial = 1;
 
+// ---------------------------------------------------------------------------
+// Shadow diagnostics (temporary instrumentation)
+// ---------------------------------------------------------------------------
+
+#include <stdio.h>
+#include <stdarg.h>
+
+static FILE *s_ShadowLog = nullptr;
+static long s_ShadowLogBytes = 0;
+static unsigned int s_ShadowFrame = 0;
+static const long SHADOW_LOG_CAP = 8 * 1024 * 1024;
+
+void CpShadowNewFrame()
+{
+	s_ShadowFrame++;
+
+	if (!s_ShadowLog && s_ShadowLogBytes == 0)
+	{
+		char path[MAX_PATH];
+		GetModuleFileNameA(nullptr, path, MAX_PATH);
+		char *slash = strrchr(path, '\\');
+		if (slash) *(slash + 1) = 0;
+		lstrcatA(path, "shadow_debug.log");
+		s_ShadowLog = fopen(path, "a");
+		if (!s_ShadowLog) { s_ShadowLogBytes = SHADOW_LOG_CAP + 1; return; }
+	}
+
+	if (s_ShadowLog && (s_ShadowFrame % 30) == 0)
+	{
+		char line[64];
+		int n = sprintf(line, "== FRAME %u ==\n", s_ShadowFrame);
+		fwrite(line, 1, n, s_ShadowLog);
+		fflush(s_ShadowLog);
+		s_ShadowLogBytes += n;
+		if (s_ShadowLogBytes > SHADOW_LOG_CAP) { fclose(s_ShadowLog); s_ShadowLog = nullptr; }
+	}
+}
+
+void CpShadowEvent(const char *fmt, ...)
+{
+	if (!s_ShadowLog || s_ShadowLogBytes > SHADOW_LOG_CAP)
+		return;
+
+	char line[512];
+	va_list ap;
+	va_start(ap, fmt);
+	int n = _vsnprintf(line, sizeof(line) - 2, fmt, ap);
+	va_end(ap);
+	if (n < 0) return;
+	line[n++] = '\n';
+	fwrite(line, 1, n, s_ShadowLog);
+	fflush(s_ShadowLog);
+	s_ShadowLogBytes += n;
+}
+
 static UINT GetShadowFormatBpp(D3DFORMAT Format)
 {
 	switch (Format)
@@ -140,6 +195,9 @@ void Direct3DSurface8::EnableRenderTargetShadow()
 
 	if (FAILED(ProxyInterface->GetDesc(&Desc)))
 		return;
+
+	CpShadowEvent("ENABLE this=%p rt=%d fmt=%d %ux%u pool=%d", (void*)this,
+		(int)((Desc.Usage & D3DUSAGE_RENDERTARGET) != 0), (int)Desc.Format, Desc.Width, Desc.Height, (int)Desc.Pool);
 
 	if ((Desc.Usage & D3DUSAGE_RENDERTARGET) == 0 || Desc.MultiSampleType != D3DMULTISAMPLE_NONE)
 		return;
@@ -165,6 +223,7 @@ void Direct3DSurface8::EnableRenderTargetShadow()
 	// Start from the current GPU content so even the first lock returns
 	// valid pixels (the app only overwrites part of the surface per frame).
 	ShadowSyncFromReal();
+	CpShadowEvent("ENABLE-ALLOC done %ux%u bpp=%u", ShadowWidth, ShadowHeight, ShadowBpp);
 }
 
 void Direct3DSurface8::InvalidateRenderTargetShadow()
@@ -181,6 +240,8 @@ void Direct3DSurface8::ShadowSyncFromReal()
 
 	if (FAILED(ProxyInterface->LockRect(&lr, nullptr, D3DLOCK_READONLY)))
 		return; // device lost: keep LastSyncSerial behind and retry later
+
+	CpShadowEvent("SYNC-FULL this=%p serial=%d", (void*)this, (int)GpuOpSerial);
 
 	const BYTE *src = (const BYTE *)lr.pBits;
 
@@ -234,6 +295,9 @@ HRESULT Direct3DSurface8::LockShadowRect(D3DLOCKED_RECT *pLockedRect, const RECT
 	OpenLockFlags = Flags;
 	HasOpenLock = true;
 
+	CpShadowEvent("LOCK this=%p rect=(%ld,%ld,%ld,%ld) ro=%d", (void*)this,
+		rc.left, rc.top, rc.right, rc.bottom, (int)((Flags & D3DLOCK_READONLY) != 0));
+
 	return D3D_OK;
 }
 
@@ -263,6 +327,9 @@ void Direct3DSurface8::UnlockShadowRect()
 
 	if ((OpenLockFlags & D3DLOCK_READONLY) == 0)
 		MarkShadowDirty(OpenLockRect);
+
+	CpShadowEvent("UNLOCK this=%p dirty=(%ld,%ld,%ld,%ld) has=%d", (void*)this,
+		ShadowDirty.left, ShadowDirty.top, ShadowDirty.right, ShadowDirty.bottom, (int)HasShadowDirty);
 }
 
 void Direct3DSurface8::FlushShadowDirty()
@@ -298,6 +365,7 @@ void Direct3DSurface8::FlushShadowDirty()
 	ProxyInterface->UnlockRect();
 	HasShadowDirty = false;
 	LastSyncSerial = GpuOpSerial;
+	CpShadowEvent("FLUSH this=%p rect=(%ld,%ld,%ld,%ld)", (void*)this, rc.left, rc.top, rc.right, rc.bottom);
 }
 
 void Direct3DSurface8::CopyShadowToSurface(const RECT &SrcRect, IDirect3DSurface9 *pDestSurface, LONG DestX, LONG DestY)
@@ -317,6 +385,8 @@ void Direct3DSurface8::CopyShadowToSurface(const RECT &SrcRect, IDirect3DSurface
 	}
 
 	pDestSurface->UnlockRect();
+	CpShadowEvent("COPYFROM-SHADOW this=%p rect=(%ld,%ld,%ld,%ld) at=(%ld,%ld)", (void*)this,
+		SrcRect.left, SrcRect.top, SrcRect.right, SrcRect.bottom, DestX, DestY);
 }
 
 void Direct3DSurface8::CopySurfaceToShadow(IDirect3DSurface9 *pSrcSurface, const RECT &SrcRect, LONG DestX, LONG DestY)
@@ -337,4 +407,6 @@ void Direct3DSurface8::CopySurfaceToShadow(IDirect3DSurface9 *pSrcSurface, const
 
 	RECT Dirty = { DestX, DestY, DestX + (SrcRect.right - SrcRect.left), DestY + (SrcRect.bottom - SrcRect.top) };
 	MarkShadowDirty(Dirty);
+	CpShadowEvent("COPYTO-SHADOW this=%p src-rect=(%ld,%ld,%ld,%ld) at=(%ld,%ld)", (void*)this,
+		SrcRect.left, SrcRect.top, SrcRect.right, SrcRect.bottom, DestX, DestY);
 }

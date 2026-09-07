@@ -10,6 +10,10 @@
 #include "d3d8.hpp"
 #include "interface_query.hpp"
 
+// Shadow diagnostics (temporary instrumentation)
+void CpShadowEvent(const char *fmt, ...);
+void CpShadowNewFrame();
+
 // Bumped on every device operation that may have modified a render target
 // (clears, draws, copies, resets). Shadow lock caches compare their sync
 // serial against this to decide when their content must be refreshed.
