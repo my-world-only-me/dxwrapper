@@ -185,7 +185,7 @@ static bool ShadowNoResync()
 	{
 		char buf[8] = { 0 };
 		DWORD n = GetEnvironmentVariableA("DXW_SHADOW_NORESYNC", buf, sizeof(buf));
-		enabled = !(n > 0 && buf[0] == '0');   // default ON (persistent canvas)
+		enabled = (n > 0 && buf[0] == '1');   // default OFF: sync is non-destructive now
 		init = true;
 		if (enabled)
 			CpShadowEvent("NORESYNC mode enabled");
@@ -267,14 +267,26 @@ void Direct3DSurface8::ShadowSyncFromReal()
 
 	const BYTE *src = (const BYTE *)lr.pBits;
 
+	// Non-destructive sync: rows inside the pending dirty rectangle hold
+	// CPU-painted content newer than the GPU surface (e.g. a scene push that
+	// arrived through CopyRects after the last flush). Those rows are skipped
+	// so the push survives the sync; only the remaining rows are refreshed.
+	const LONG dirtyTop = HasShadowDirty ? ShadowDirty.top : (LONG)ShadowHeight;
+	const LONG dirtyBottom = HasShadowDirty ? ShadowDirty.bottom : 0;
+
 	for (UINT y = 0; y < ShadowHeight; ++y)
 	{
+		if ((LONG)y >= dirtyTop && (LONG)y < dirtyBottom)
+			continue;
+
 		memcpy(ShadowBuffer + (size_t)y * ShadowWidth * ShadowBpp,
 			src + (size_t)y * lr.Pitch,
 			(size_t)ShadowWidth * ShadowBpp);
 	}
 
 	ProxyInterface->UnlockRect();
+	// HasShadowDirty is deliberately preserved: the skipped rows still hold
+	// unflushed CPU content that the next flush must write back.
 	LastSyncSerial = GpuOpSerial;
 }
 
