@@ -172,6 +172,28 @@ void CpShadowEvent(const char *fmt, ...)
 	s_ShadowLogBytes += n;
 }
 
+// Experimental: when DXW_SHADOW_NORESYNC=1 the shadow never re-reads the
+// GPU surface after startup, making it a fully persistent CPU canvas - the
+// semantics the engine was designed for on D3D8-era system-memory
+// backbuffers. Used to test the black-scene-after-map-close report.
+static bool ShadowNoResync()
+{
+	static bool init = false;
+	static bool enabled = false;
+
+	if (!init)
+	{
+		char buf[8] = { 0 };
+		DWORD n = GetEnvironmentVariableA("DXW_SHADOW_NORESYNC", buf, sizeof(buf));
+		enabled = (n > 0 && buf[0] == '1');
+		init = true;
+		if (enabled)
+			CpShadowEvent("NORESYNC mode enabled");
+	}
+
+	return enabled;
+}
+
 static UINT GetShadowFormatBpp(D3DFORMAT Format)
 {
 	switch (Format)
@@ -258,6 +280,9 @@ void Direct3DSurface8::ShadowSyncFromReal()
 
 void Direct3DSurface8::EnsureShadowSynced()
 {
+	if (ShadowNoResync())
+		return;
+
 	if (LastSyncSerial != GpuOpSerial)
 		ShadowSyncFromReal();
 }
