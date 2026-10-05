@@ -70,6 +70,7 @@ inline std::ostream& operator<<(std::ostream& os, const DHEX& dhex) {
 	visit(DdrawMaintainAspectRatio) \
 	visit(DdrawNoDrawBufferSysLock) \
 	visit(DdrawNoMultiThreaded) \
+	visit(DdrawForceFixedMode) \
 	visit(DdrawOverrideBitMode) \
 	visit(DdrawOverrideWidth) \
 	visit(DdrawOverrideHeight) \
@@ -304,6 +305,7 @@ struct CONFIG
 	bool DdrawDisableDirect3DCaps = false;		// Disable caps for Direct3D to try and force the game to use DirectDraw instaed of Direct3D
 	bool DdrawLimitTextureFormats = false;		// Limits the number of texture formats sent to the program, some games crash when you feed them with too many textures
 	bool DdrawLimitDisplayModeCount = false;	// Limits the number of display modes sent to program, some games crash when you feed them with too many resolutions
+	bool DdrawForceFixedMode = false;				// fix31: force every SetDisplayMode request to DdrawCustomWidth/Height (kills engine resolution-switch churn)
 	DWORD DdrawOverrideBitMode = 0;				// Forces DirectX to use specified bit mode: 8, 16, 24, 32
 	bool Spoof16Bpp = false;					// Spoof the desktop color depth as 16bpp (GetDeviceCaps/EnumDisplaySettings) for 16bpp-era games in windowed mode
 	DWORD DdrawOverrideWidth = 0;				// Force Direct3d9 to use this width when using Dd7to9

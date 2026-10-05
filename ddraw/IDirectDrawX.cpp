@@ -1965,7 +1965,24 @@ HRESULT m_IDirectDrawX::SetDisplayMode(DWORD dwWidth, DWORD dwHeight, DWORD dwBP
 
 	if (Config.Dd7to9)
 	{
-		if (!dwWidth || !dwHeight || (dwBPP != 8 && dwBPP != 16 && dwBPP != 24 && dwBPP != 32))
+				// fix31: constant resolution. The engine switches its whole render parameter set
+		// (SelectParaByResolution) per display mode and destroys/recreates every surface
+		// on each switch. Under the wrapper the recreated surfaces desync from the
+		// engine's long-lived cached LockRect pointers => use-after-free / OOB after a
+		// few 800x600 <-> 1024x768 round trips.
+		// Force every SetDisplayMode request onto DdrawCustomWidth/Height so the engine
+		// never switches parameter sets.
+		if (Config.DdrawForceFixedMode && Config.DdrawCustomWidth && Config.DdrawCustomHeight)
+		{
+			if (dwWidth != Config.DdrawCustomWidth || dwHeight != Config.DdrawCustomHeight)
+			{
+				LOG_LIMIT(100, __FUNCTION__ << " fix31: forcing " << dwWidth << "x" << dwHeight << " -> "
+					<< Config.DdrawCustomWidth << "x" << Config.DdrawCustomHeight);
+			}
+			dwWidth = Config.DdrawCustomWidth;
+			dwHeight = Config.DdrawCustomHeight;
+		}
+if (!dwWidth || !dwHeight || (dwBPP != 8 && dwBPP != 16 && dwBPP != 24 && dwBPP != 32))
 		{
 			LOG_LIMIT(100, __FUNCTION__ << " Error: Invalid parameters: " << dwWidth << "x" << dwHeight << " " << dwBPP);
 			return DDERR_UNSUPPORTED;
