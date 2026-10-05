@@ -97,6 +97,12 @@ HRESULT STDMETHODCALLTYPE Direct3DSurface8::GetDesc(D3DSURFACE_DESC8 *pDesc)
 }
 HRESULT STDMETHODCALLTYPE Direct3DSurface8::LockRect(D3DLOCKED_RECT *pLockedRect, const RECT *pRect, DWORD Flags)
 {
+	// fix32: 每次锁先核对影子几何与真实表面是否一致。
+	// 设备 Reset/模式切换会让代理表面按新模式重建 (800x600 <-> 1024x768),
+	// 而 Enable 只在 GetBackBuffer/SetRenderTarget 绑定点运行; 未经绑定的锁
+	// 会带着旧尺寸影子去同步新尺寸真实表面 => 越界读。
+	// EnableRenderTargetShadow 内部按当前 GetDesc 校正影子尺寸 (几何不变时立即返回)。
+	EnableRenderTargetShadow();
 	if (!IsShadowEnabled())
 		return ProxyInterface->LockRect(pLockedRect, pRect, Flags);
 
