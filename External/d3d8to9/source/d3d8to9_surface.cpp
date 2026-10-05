@@ -10,8 +10,14 @@ Direct3DSurface8::Direct3DSurface8(Direct3DDevice8 *Device, IDirect3DSurface9 *P
 {
 	Device->ProxyAddressLookupTable->SaveAddress(this, ProxyInterface);
 }
+struct ShadowBufferCacheEntry;
+static void ParkShadowBuffer(BYTE *Buffer, UINT Width, UINT Height, UINT Bpp);
+
 Direct3DSurface8::~Direct3DSurface8()
 {
+	// fix30: 影子缓冲退役进缓存 (修泄漏 + 保引擎缓存指针有效)
+	ParkShadowBuffer(ShadowBuffer, ShadowWidth, ShadowHeight, ShadowBpp);
+	ShadowBuffer = nullptr;
 }
 
 HRESULT STDMETHODCALLTYPE Direct3DSurface8::QueryInterface(REFIID riid, void **ppvObj)
@@ -220,6 +226,51 @@ static UINT GetShadowFormatBpp(D3DFORMAT Format)
 	}
 }
 
+// fix30: 影子缓冲按几何尺寸缓存。
+// 引擎 (Gfx3D) 会把 LockRect 返回的指针跨表面重建长期缓存; 旧实现在尺寸变化时
+// delete[] 旧影子缓冲 => 引擎缓存的指针变成 use-after-free (场景切换往返后必崩)。
+// 旧影子缓冲现在退役进缓存表 (表面析构同样入缓存, 不再泄漏), 同几何尺寸重建时
+// 复用 => 引擎缓存的老指针连同 pitch 一起自动复活。
+struct ShadowBufferCacheEntry
+{
+	BYTE *Buffer = nullptr;
+	UINT Width = 0, Height = 0, Bpp = 0;
+};
+
+static std::vector<ShadowBufferCacheEntry> &GetShadowBufferCache()
+{
+	static std::vector<ShadowBufferCacheEntry> cache;
+	return cache;
+}
+
+static constexpr size_t SHADOW_CACHE_MAX_ENTRIES = 4;
+
+static void ParkShadowBuffer(BYTE *Buffer, UINT Width, UINT Height, UINT Bpp)
+{
+	if (!Buffer)
+		return;
+
+	auto &cache = GetShadowBufferCache();
+
+	// 满员时复用最老的槽位: 到这一步的老缓冲最多在上一轮场景里被引擎缓存,
+	// v4 的场景入口重建 + 重新 Lock 已在两轮之内刷新过所有缓存指针。
+	for (auto &entry : cache)
+	{
+		if (!entry.Buffer)
+		{
+			entry = { Buffer, Width, Height, Bpp };
+			return;
+		}
+	}
+	if (cache.size() < SHADOW_CACHE_MAX_ENTRIES)
+	{
+		cache.push_back({ Buffer, Width, Height, Bpp });
+		return;
+	}
+	cache.resize(1);
+	cache[0] = { Buffer, Width, Height, Bpp };
+}
+
 void Direct3DSurface8::EnableRenderTargetShadow()
 {
 	D3DSURFACE_DESC Desc;
@@ -241,7 +292,26 @@ void Direct3DSurface8::EnableRenderTargetShadow()
 	if (ShadowBuffer && ShadowWidth == Desc.Width && ShadowHeight == Desc.Height && ShadowFormat == Desc.Format)
 		return;
 
-	delete[] ShadowBuffer;
+	// fix30: 同几何尺寸的退役缓冲直接复用 (老缓存指针复活), 不再 delete[]
+	auto &cache = GetShadowBufferCache();
+	for (auto &entry : cache)
+	{
+		if (entry.Buffer && entry.Width == Desc.Width && entry.Height == Desc.Height && entry.Bpp == Bpp)
+		{
+			ShadowWidth = entry.Width;
+			ShadowHeight = entry.Height;
+			ShadowFormat = Desc.Format;
+			ShadowBpp = entry.Bpp;
+			ShadowBuffer = entry.Buffer;
+			entry.Buffer = nullptr;
+			HasShadowDirty = false;
+			HasOpenLock = false;
+			LastSyncSerial = 0;
+			ShadowSyncFromReal();
+			return;
+		}
+	}
+	ParkShadowBuffer(ShadowBuffer, ShadowWidth, ShadowHeight, ShadowBpp);
 	ShadowWidth = Desc.Width;
 	ShadowHeight = Desc.Height;
 	ShadowFormat = Desc.Format;
